@@ -1,10 +1,10 @@
 project "ImGui"
 	kind "StaticLib"
 	language "C++"
-    staticruntime "off"
+	staticruntime "off"
 
-	targetdir (TargetDir)
-	objdir (ObjDir)
+	targetdir (LibTargetDir)
+	objdir (LibObjDir)
 
 	files {
 		"imconfig.h",
@@ -20,20 +20,23 @@ project "ImGui"
 		"imgui_demo.cpp"
 	}
 
-	filter "platforms:Windows"
+	-- filter "platforms:Windows"
+	filter "system:windows"
 		systemversion "latest"
 		cppdialect "C++17"
 
-	filter "platforms:Linux"
+	-- filter "platforms:Linux"
+	filter "system:linux"
 		pic "On"
 		systemversion "latest"
 		cppdialect "C++17"
+	
+	-- filter "platforms:MacOS"
+	filter "system:macosx"
+		pic "On"
+		cppdialect "C++17"
 
-    filter "platforms:MacOS"
-        pic "On"
-        cppdialect "C++17"
-
-    filter "configurations:Debug"
+	filter "configurations:Debug"
 		runtime "Debug"
 		symbols "on"
 
@@ -45,4 +48,4 @@ project "ImGui"
 	filter "configurations:Shipping"
 		runtime "Release"
 		optimize "Full"
-        symbols "off"
+		symbols "off"
