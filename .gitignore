@@ -64,3 +64,7 @@ examples/example_sdl_opengl3/example_sdl_opengl3
 *.sln
 *.vcxproj
 *.vcxproj.filters
+
+# Makefiles
+Makefile
+*.make
