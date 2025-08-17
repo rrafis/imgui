@@ -687,7 +687,8 @@ void ImGui_ImplVulkan_UpdateTexture(ImTextureData* tex)
         // Create and upload new texture to graphics system
         //IMGUI_DEBUG_LOG("UpdateTexture #%03d: WantCreate %dx%d\n", tex->UniqueID, tex->Width, tex->Height);
         IM_ASSERT(tex->TexID == ImTextureID_Invalid && tex->BackendUserData == nullptr);
-        IM_ASSERT(tex->Format == ImTextureFormat_RGBA32);
+        // IM_ASSERT(tex->Format == ImTextureFormat_RGBA32);
+        IM_ASSERT(tex->Format == ImTextureFormat_RGBA16Float);
         ImGui_ImplVulkan_Texture* backend_tex = IM_NEW(ImGui_ImplVulkan_Texture)();
 
         // Create the Image:
@@ -695,7 +696,8 @@ void ImGui_ImplVulkan_UpdateTexture(ImTextureData* tex)
             VkImageCreateInfo info = {};
             info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
             info.imageType = VK_IMAGE_TYPE_2D;
-            info.format = VK_FORMAT_R8G8B8A8_UNORM;
+            // info.format = VK_FORMAT_R8G8B8A8_UNORM;
+            info.format = VK_FORMAT_R16G16B16A16_SFLOAT;
             info.extent.width = tex->Width;
             info.extent.height = tex->Height;
             info.extent.depth = 1;
@@ -726,7 +728,8 @@ void ImGui_ImplVulkan_UpdateTexture(ImTextureData* tex)
             info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
             info.image = backend_tex->Image;
             info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            info.format = VK_FORMAT_R8G8B8A8_UNORM;
+            // info.format = VK_FORMAT_R8G8B8A8_UNORM;
+            info.format = VK_FORMAT_R16G16B16A16_SFLOAT;
             info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             info.subresourceRange.levelCount = 1;
             info.subresourceRange.layerCount = 1;

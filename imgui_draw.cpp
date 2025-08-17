@@ -2426,6 +2426,7 @@ int ImTextureDataGetFormatBytesPerPixel(ImTextureFormat format)
     {
     case ImTextureFormat_Alpha8: return 1;
     case ImTextureFormat_RGBA32: return 4;
+    case ImTextureFormat_RGBA16Float: return 8;
     }
     IM_ASSERT(0);
     return 0;
@@ -2450,6 +2451,7 @@ const char* ImTextureDataGetFormatName(ImTextureFormat format)
     {
     case ImTextureFormat_Alpha8: return "Alpha8";
     case ImTextureFormat_RGBA32: return "RGBA32";
+    case ImTextureFormat_RGBA16Float: return "RGBA16Float";
     }
     return "N/A";
 }
@@ -2567,6 +2569,88 @@ void ImTextureData::DestroyPixels()
 // - ImFontAtlasGetFontLoaderForStbTruetype()
 //-----------------------------------------------------------------------------
 
+//-----------------------------------------------------------------------------
+// - [SUBSECTION] Helpers
+//-----------------------------------------------------------------------------
+
+constexpr ImU16 FloatToHalf(float value)
+{
+    union { float f; uint32_t u; } in = { value };
+    uint32_t f = in.u;
+
+    uint32_t sign = (f >> 16) & 0x8000;
+    int32_t exponent = ((f >> 23) & 0xFF) - 127;
+    uint32_t mantissa = f & 0x007FFFFF;
+
+    if (exponent < -14)
+    {
+        // Too small for subnormal half-float
+        return (uint16_t)sign;
+    }
+    else if (exponent <= -15)
+    {
+        // Subnormal half-float
+        mantissa |= 0x00800000;
+        int shift = -exponent - 1;
+        mantissa >>= (shift + 13);
+        return (uint16_t)(sign | mantissa);
+    }
+    else if (exponent > 15)
+    {
+        // Overflow → Inf
+        return (uint16_t)(sign | 0x7C00);
+    }
+
+    // Normalized half-float
+    uint16_t half_exp = (exponent + 15) << 10;
+    uint16_t half_mant = mantissa >> 13;
+    return (uint16_t)(sign | half_exp | half_mant);
+}
+constexpr float HalfToFloat(ImU16 h)
+{
+    uint32_t sign = (h & 0x8000) << 16;
+    uint32_t exponent = (h & 0x7C00) >> 10;
+    uint32_t mantissa = (h & 0x03FF);
+
+    uint32_t f;
+
+    if (exponent == 0)
+    {
+        if (mantissa == 0)
+        {
+            // Zero
+            f = sign;
+        }
+        else
+        {
+            // Subnormal
+            exponent = 1;
+            while ((mantissa & 0x0400) == 0)
+            {
+                mantissa <<= 1;
+                exponent--;
+            }
+            mantissa &= 0x03FF;
+            exponent += 127 - 15;
+            f = sign | (exponent << 23) | (mantissa << 13);
+        }
+    }
+    else if (exponent == 0x1F)
+    {
+        // Inf or NaN
+        f = sign | 0x7F800000 | (mantissa << 13);
+    }
+    else
+    {
+        // Normalized
+        exponent += 127 - 15;
+        f = sign | (exponent << 23) | (mantissa << 13);
+    }
+
+    union { uint32_t u; float f; } out = { f };
+    return out.f;
+}
+
 // A work of art lies ahead! (. = white layer, X = black layer, others are blank)
 // The 2x2 white texels on the top left are the ones we'll use everywhere in Dear ImGui to render filled shapes.
 // (This is used when io.MouseDrawCursor = true)
@@ -2625,7 +2709,7 @@ static const ImVec2 FONT_ATLAS_DEFAULT_TEX_CURSOR_DATA[ImGuiMouseCursor_COUNT][3
 ImFontAtlas::ImFontAtlas()
 {
     memset(this, 0, sizeof(*this));
-    TexDesiredFormat = ImTextureFormat_RGBA32;
+    TexDesiredFormat = ImTextureFormat_RGBA16Float;
     TexGlyphPadding = 1;
     TexMinWidth = 512;
     TexMinHeight = 128;
@@ -2854,6 +2938,24 @@ void ImFontAtlasTextureBlockConvert(const unsigned char* src_pixels, ImTextureFo
                 *dst_p++ = ((*src_p++) >> IM_COL32_A_SHIFT) & 0xFF;
         }
     }
+    else if (src_fmt == ImTextureFormat_Alpha8 && dst_fmt == ImTextureFormat_RGBA16Float)
+    {
+        ImU16 h1 = FloatToHalf(1.0f);
+        for (int ny = h; ny > 0; ny--, src_pixels += src_pitch, dst_pixels += dst_pitch)
+        {
+            const ImU8* src_p = (const ImU8*)src_pixels;
+            ImU16* dst_p = (ImU16*)dst_pixels;
+            for (int nx = w; nx > 0; nx--)
+            {
+                float alpha = (float)(*src_p++) / 255.0f;
+                ImU16 ha = FloatToHalf(alpha);
+                *dst_p++ = h1;
+                *dst_p++ = h1;
+                *dst_p++ = h1;
+                *dst_p++ = ha;
+            }
+        }
+    }
     else
     {
         IM_ASSERT(0);
@@ -2897,6 +2999,19 @@ void ImFontAtlasTextureBlockPostProcessMultiply(ImFontAtlasPostProcessData* data
             }
         }
     }
+    else if (data->Format == ImTextureFormat_RGBA16Float)
+    {
+        for (int ny = data->Height; ny > 0; ny--, pixels += pitch)
+        {
+            ImU64* p = (ImU64*)pixels;
+            for (int nx = data->Width; nx > 0; nx--, p++)
+            {
+                ImU16* ptr = (ImU16*)p;
+                float alpha = ImMin((HalfToFloat(ptr[3]) * multiply_factor), 1.0f);
+                ptr[3] = FloatToHalf(alpha);
+            }
+        }
+    }
     else
     {
         IM_ASSERT(0);
@@ -2912,13 +3027,33 @@ void ImFontAtlasTextureBlockFill(ImTextureData* dst_tex, int dst_x, int dst_y, i
         for (int y = 0; y < h; y++)
             memset((ImU8*)dst_tex->GetPixelsAt(dst_x, dst_y + y), col_a, w);
     }
-    else
+    else if (dst_tex->Format == ImTextureFormat_RGBA32)
     {
         for (int y = 0; y < h; y++)
         {
             ImU32* p = (ImU32*)(void*)dst_tex->GetPixelsAt(dst_x, dst_y + y);
             for (int x = w; x > 0; x--, p++)
                 *p = col;
+        }
+    }
+    else if (dst_tex->Format == ImTextureFormat_RGBA16Float)
+    {
+        auto val = ImColor(col);
+        auto hr = FloatToHalf(val.Value.x);
+        auto hg = FloatToHalf(val.Value.y);
+        auto hb = FloatToHalf(val.Value.z);
+        auto ha = FloatToHalf(val.Value.w);
+        for (int y = 0; y < h; y++)
+        {
+            ImU64* p = (ImU64*)dst_tex->GetPixelsAt(dst_x, dst_y + y);
+            for (int x = w; x > 0; x--, p++)
+            {
+                ImU16* ptr = (ImU16*)p;
+                ptr[0] = hr;
+                ptr[1] = hg;
+                ptr[2] = hb;
+                ptr[3] = ha;
+            }
         }
     }
 }
@@ -3469,6 +3604,24 @@ void ImFontAtlasBuildRenderBitmapFromString(ImFontAtlas* atlas, int x, int y, in
                 out_p[off_x] = (in_str[off_x] == in_marker_char) ? IM_COL32_WHITE : IM_COL32_BLACK_TRANS;
         break;
     }
+    case ImTextureFormat_RGBA16Float:
+    {
+        ImU16 h1 = FloatToHalf(1.0f);
+        ImU16 h0 = FloatToHalf(0.0f);
+
+        ImU64* out_p = (ImU64*)tex->GetPixelsAt(x, y);
+        for (int off_y = 0; off_y < h; off_y++, out_p += tex->Width, in_str += w)
+            for (int off_x = 0; off_x < w; off_x++)
+            {
+                ImU16 v = (in_str[off_x] == in_marker_char) ? h1 : h0;
+                ImU16* ptr = (ImU16*)&out_p[off_x];
+                ptr[0] = v;
+                ptr[1] = v;
+                ptr[2] = v;
+                ptr[3] = v;
+            }
+        break;
+    }
     }
 }
 
@@ -3560,6 +3713,39 @@ static void ImFontAtlasBuildUpdateLinesTexData(ImFontAtlas* atlas)
 
             for (int i = 0; i < pad_right; i++)
                 *(write_ptr + pad_left + line_width + i) = IM_COL32(255, 255, 255, 0);
+        }
+        else if (add_and_draw && tex->Format == ImTextureFormat_RGBA16Float)
+        {
+            ImU16 h1 = FloatToHalf(1.0f);
+            ImU16 h0 = FloatToHalf(0.0f);
+
+            ImU64* write_ptr = (ImU64*)(void*)tex->GetPixelsAt(r.x, r.y + y);
+            for (int i = 0; i < pad_left; i++)
+            {
+                ImU16* ptr = (ImU16*)(write_ptr + i);
+                ptr[0] = h1;
+                ptr[1] = h1;
+                ptr[2] = h1;
+                ptr[3] = h0;
+            }
+
+            for (int i = 0; i < line_width; i++)
+            {
+                ImU16* ptr = (ImU16*)(write_ptr + pad_left + i);
+                ptr[0] = h1;
+                ptr[1] = h1;
+                ptr[2] = h1;
+                ptr[3] = h1;
+            }
+
+            for (int i = 0; i < pad_right; i++)
+            {
+                ImU16* ptr = (ImU16*)(write_ptr + pad_left + line_width + i);
+                ptr[0] = h1;
+                ptr[1] = h1;
+                ptr[2] = h1;
+                ptr[3] = h0;
+            }
         }
 
         // Refresh UV coordinates

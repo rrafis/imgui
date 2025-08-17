@@ -3404,6 +3404,7 @@ struct ImDrawData
 // Most standard backends only support RGBA32 but we provide a single channel option for low-resource/embedded systems.
 enum ImTextureFormat
 {
+    ImTextureFormat_RGBA16Float,    // 4 components per pixel, each is unsigned 16-bit. Total size = TexWidth * TexHeight * 8
     ImTextureFormat_RGBA32,         // 4 components per pixel, each is unsigned 8-bit. Total size = TexWidth * TexHeight * 4
     ImTextureFormat_Alpha8,         // 1 component per pixel, each is unsigned 8-bit. Total size = TexWidth * TexHeight
 };

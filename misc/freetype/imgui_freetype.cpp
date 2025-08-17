@@ -560,7 +560,7 @@ static bool ImGui_ImplFreeType_FontBakedLoadGlyph(ImFontAtlas* atlas, ImFontConf
         out_glyph->Visible = true;
         out_glyph->Colored = (ft_bitmap->pixel_mode == FT_PIXEL_MODE_BGRA);
         out_glyph->PackId = pack_id;
-        ImFontAtlasBakedSetFontGlyphBitmap(atlas, baked, src, out_glyph, r, (const unsigned char*)temp_buffer, ImTextureFormat_RGBA32, w * 4);
+        ImFontAtlasBakedSetFontGlyphBitmap(atlas, baked, src, out_glyph, r, (const unsigned char*)temp_buffer, atlas->TextureData->Format, w * atlas->TextureData->BytesPerPixel);
     }
 
     return true;

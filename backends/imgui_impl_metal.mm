@@ -354,13 +354,14 @@ void ImGui_ImplMetal_UpdateTexture(ImTextureData* tex)
         // Create and upload new texture to graphics system
         //IMGUI_DEBUG_LOG("UpdateTexture #%03d: WantCreate %dx%d\n", tex->UniqueID, tex->Width, tex->Height);
         IM_ASSERT(tex->TexID == ImTextureID_Invalid && tex->BackendUserData == nullptr);
-        IM_ASSERT(tex->Format == ImTextureFormat_RGBA32);
+        // IM_ASSERT(tex->Format == ImTextureFormat_RGBA32);
+        IM_ASSERT(tex->Format == ImTextureFormat_RGBA16Float);
 
         // We are retrieving and uploading the font atlas as a 4-channels RGBA texture here.
         // In theory we could call GetTexDataAsAlpha8() and upload a 1-channel texture to save on memory access bandwidth.
         // However, using a shader designed for 1-channel texture would make it less obvious to use the ImTextureID facility to render users own textures.
         // You can make that change in your implementation.
-        MTLTextureDescriptor* textureDescriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+        MTLTextureDescriptor* textureDescriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:/*MTLPixelFormatRGBA8Unorm*/MTLPixelFormatRGBA16Float
                                                                                                      width:(NSUInteger)tex->Width
                                                                                                     height:(NSUInteger)tex->Height
                                                                                                  mipmapped:NO];
@@ -371,7 +372,7 @@ void ImGui_ImplMetal_UpdateTexture(ImTextureData* tex)
         textureDescriptor.storageMode = MTLStorageModeShared;
     #endif
         id <MTLTexture> texture = [bd->SharedMetalContext.device newTextureWithDescriptor:textureDescriptor];
-        [texture replaceRegion:MTLRegionMake2D(0, 0, (NSUInteger)tex->Width, (NSUInteger)tex->Height) mipmapLevel:0 withBytes:tex->Pixels bytesPerRow:(NSUInteger)tex->Width * 4];
+        [texture replaceRegion:MTLRegionMake2D(0, 0, (NSUInteger)tex->Width, (NSUInteger)tex->Height) mipmapLevel:0 withBytes:tex->Pixels bytesPerRow:(NSUInteger)tex->Width * tex->BytesPerPixel];
         MetalTexture* backend_tex = [[MetalTexture alloc] initWithTexture:texture];
 
         // Store identifiers
@@ -389,7 +390,7 @@ void ImGui_ImplMetal_UpdateTexture(ImTextureData* tex)
             [backend_tex.metalTexture replaceRegion:MTLRegionMake2D((NSUInteger)r.x, (NSUInteger)r.y, (NSUInteger)r.w, (NSUInteger)r.h)
                                         mipmapLevel:0
                                           withBytes:tex->GetPixelsAt(r.x, r.y)
-                                        bytesPerRow:(NSUInteger)tex->Width * 4];
+                                        bytesPerRow:(NSUInteger)tex->Width * tex->BytesPerPixel];
         }
         tex->SetStatus(ImTextureStatus_OK);
     }
