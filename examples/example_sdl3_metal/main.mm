@@ -56,6 +56,22 @@ int main(int, char**)
     id<MTLCommandQueue> commandQueue = [layer.device newCommandQueue];
     MTLRenderPassDescriptor* renderPassDescriptor = [MTLRenderPassDescriptor new];
 
+    bool supports_metal4 = false;
+    if (@available(iOS 26.0, tvOS 26.0, macOS 26.0, *))
+    {
+        supports_metal4 = [layer.device supportsFamily:MTLGPUFamilyMetal4];
+    }
+
+    id<MTL4CommandQueue> commandQueueMTL4;
+    MTL4RenderPassDescriptor* renderPassDescriptorMTL4;
+    id<MTL4CommandAllocator> commandAllocator;
+    if (supports_metal4)
+    {
+        commandQueueMTL4 = [layer.device newMTL4CommandQueue];
+        renderPassDescriptorMTL4 = [MTL4RenderPassDescriptor new];
+        commandAllocator = [layer.device newCommandAllocator];
+    }
+
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -99,6 +115,9 @@ int main(int, char**)
     bool show_another_window = false;
     float clear_color[4] = { 0.45f, 0.55f, 0.60f, 1.00f };
 
+    bool use_metal4 = true;
+    bool should_use_metal4 = false;
+
     // Main loop
     bool done = false;
     while (!done)
@@ -134,16 +153,46 @@ int main(int, char**)
             layer.drawableSize = CGSizeMake(width, height);
             id<CAMetalDrawable> drawable = [layer nextDrawable];
 
-            id<MTLCommandBuffer> commandBuffer = [commandQueue commandBuffer];
-            renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(clear_color[0] * clear_color[3], clear_color[1] * clear_color[3], clear_color[2] * clear_color[3], clear_color[3]);
-            renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
-            renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
-            renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
-            id <MTLRenderCommandEncoder> renderEncoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
-            [renderEncoder pushDebugGroup:@"ImGui demo"];
+            id<MTLCommandBuffer> commandBuffer;
+            id<MTLRenderCommandEncoder> renderEncoder;
+            id<MTL4CommandBuffer> commandBufferMTL4;
+            id<MTL4RenderCommandEncoder> renderEncoderMTL4;
+            MTL4CommitOptions* commitOptions;
+            should_use_metal4 = supports_metal4 ? should_use_metal4 : false;
+            use_metal4 = should_use_metal4;
+
+            if (use_metal4)
+            {
+                commitOptions = [MTL4CommitOptions new];
+                commandBufferMTL4 = [layer.device newCommandBuffer];
+	            [commandBufferMTL4 beginCommandBufferWithAllocator:commandAllocator];
+                renderPassDescriptorMTL4.colorAttachments[0].clearColor = MTLClearColorMake(clear_color[0] * clear_color[3], clear_color[1] * clear_color[3], clear_color[2] * clear_color[3], clear_color[3]);
+                renderPassDescriptorMTL4.colorAttachments[0].texture = drawable.texture;
+                renderPassDescriptorMTL4.colorAttachments[0].loadAction = MTLLoadActionClear;
+                renderPassDescriptorMTL4.colorAttachments[0].storeAction = MTLStoreActionStore;
+                renderEncoderMTL4 = [commandBufferMTL4 renderCommandEncoderWithDescriptor:renderPassDescriptorMTL4];
+                [renderEncoderMTL4 pushDebugGroup:@"ImGui demo"];
+            }
+            else
+            {
+                commandBuffer = [commandQueue commandBuffer];
+                renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(clear_color[0] * clear_color[3], clear_color[1] * clear_color[3], clear_color[2] * clear_color[3], clear_color[3]);
+                renderPassDescriptor.colorAttachments[0].texture = drawable.texture;
+                renderPassDescriptor.colorAttachments[0].loadAction = MTLLoadActionClear;
+                renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
+                renderEncoder = [commandBuffer renderCommandEncoderWithDescriptor:renderPassDescriptor];
+                [renderEncoder pushDebugGroup:@"ImGui demo"];
+            }
 
             // Start the Dear ImGui frame
-            ImGui_ImplMetal_NewFrame(renderPassDescriptor);
+            if (use_metal4)
+            {
+                ImGui_ImplMetal_NewFrame(renderPassDescriptorMTL4);
+            }
+            else
+            {
+                ImGui_ImplMetal_NewFrame(renderPassDescriptor);
+            }
             ImGui_ImplSDL3_NewFrame();
             ImGui::NewFrame();
 
@@ -161,6 +210,8 @@ int main(int, char**)
                 ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
                 ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools storing our window open/close state
                 ImGui::Checkbox("Another Window", &show_another_window);
+
+                ImGui::Checkbox("Use Metal 4 API", &should_use_metal4); // Switch between vanilla Metal and Metal 4
 
                 ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
                 ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
@@ -187,13 +238,34 @@ int main(int, char**)
             // Rendering
             ImGui::Render();
             ImDrawData* draw_data = ImGui::GetDrawData();
-            ImGui_ImplMetal_RenderDrawData(draw_data, commandBuffer, renderEncoder);
+            if (use_metal4)
+            {
+                ImGui_ImplMetal_RenderDrawData(draw_data, commandBufferMTL4, renderEncoderMTL4, commitOptions);
+            }
+            else
+            {
+                ImGui_ImplMetal_RenderDrawData(draw_data, commandBuffer, renderEncoder);
+            }
 
-            [renderEncoder popDebugGroup];
-            [renderEncoder endEncoding];
+            if (use_metal4)
+            {
+                [renderEncoderMTL4 popDebugGroup];
+                [renderEncoderMTL4 endEncoding];
 
-            [commandBuffer presentDrawable:drawable];
-            [commandBuffer commit];
+                [commandBufferMTL4 endCommandBuffer];
+                [commandQueueMTL4 waitForDrawable:drawable];
+                [commandQueueMTL4 commit:&commandBufferMTL4 count:1];
+                [commandQueueMTL4 signalDrawable:drawable];
+                [drawable present];
+            }
+            else
+            {
+                [renderEncoder popDebugGroup];
+                [renderEncoder endEncoding];
+
+                [commandBuffer presentDrawable:drawable];
+                [commandBuffer commit];
+            }
         }
     }
 
